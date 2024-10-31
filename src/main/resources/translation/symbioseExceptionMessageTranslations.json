@@ -1,0 +1,10 @@
+{
+  "NOT_WELL_FORMATTED_UUID": {
+    "EN" : "'%s' is not a well formatted 256-bit UUID",
+    "FR" : ""
+  },
+  "NOT_WELL_FORMATTED_UUID_NAMED_DATA": {
+    "EN" : "Value '%s' of data '%s' is not a well formatted 256-bit UUID",
+    "FR" : ""
+  }
+}

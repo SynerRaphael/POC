@@ -1,0 +1,91 @@
+name: BUILD, TEST, AND PUSH DOCKER IMAGE
+
+on:
+  push:
+    paths-ignore:
+      - 'manifest/**'
+      - 'scripts/**'
+      - '.github/**'
+    branches:
+      - 'dev'
+
+env:
+  TAG_NAME: ${{ github.sha }}
+jobs:
+
+  build-and-test-maven:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name : Set up JDK 22
+        uses: actions/setup-java@v4
+        with:
+          java-version: '22'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Generate settings.xml
+        uses: whelk-io/maven-settings-xml-action@v22
+        with:
+          repositories: '[{ "id": "maven-symbiose", "url": "https://maven.symbiose.glass/symbiose" }]'
+          servers: '[{ "id": "maven-symbiose", "username": "${{ secrets.MAVEN_USER }}","password": "${{ secrets.MAVEN_PASSWORD }}" }]'
+          output_file: .m2/settings.xml
+
+      - name: Extract repo name
+        run: echo "REPO_NAME=$(echo '${{ github.event.repository.name }}' | cut -d'/' -f2)" >> $GITHUB_ENV      
+
+      - name: Build with Maven
+        run: mvn -B package --file pom.xml -s /home/runner/work/"$REPO_NAME"/"$REPO_NAME"/.m2/settings.xml
+        #-DskipTests
+
+      - name: Upload Mave artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: maven-artifacts
+          path: target
+          retention-days: 1
+
+  build-docker-image:
+
+    runs-on: ubuntu-latest
+    needs: [build-and-test-maven]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract repo name
+        run: echo "IMAGE_NAME=synerglass/$(echo '${{ github.event.repository.name }}' | cut -d'/' -f2)" >> $GITHUB_ENV
+
+      - name: Login to Docker Hub
+        run: docker login -u ${{ secrets.DOCKER_USER_K8S }} -p ${{ secrets.DOCKER_PASS_K8S }}
+
+      - name: Make directory for artifacts
+        run: mkdir target
+
+      - name: Download Maven Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: maven-artifacts
+
+      - name: Build Docker Image
+        run: docker build . -f Dockerfile -t $IMAGE_NAME:$TAG_NAME
+
+      - name: Push Docker Image
+        run: docker push $IMAGE_NAME:$TAG_NAME
+
+
+  trigger-argo-workflow:
+
+    runs-on: ubuntu-latest
+    needs: [build-docker-image]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract repo name
+        run: echo "IMAGE_NAME=synerglass/$(echo '${{ github.event.repository.name }}' | cut -d'/' -f2)" >> $GITHUB_ENV
+
+      - name: Extract Repository URL
+        run: echo "REPO_URL=$(echo '${{ github.repositoryUrl }}' | sed 's|git://||')" >> $GITHUB_ENV
+
+      - name: Change manifest and deploy
+        run: curl -X POST -H "Content-Type:application/json" -d '{"repo":"'"$REPO_URL"'", "image":"'"$IMAGE_NAME"'", "tag":"'"$TAG_NAME"'"}' http://webhook.symbiose.glass/build
+      - name: Change manifest and deploy
+        run: curl -X POST -H "Content-Type:application/json" -d '{"repo":"'"$REPO_URL"'", "image":"'"$IMAGE_NAME"'", "tag":"'"$TAG_NAME"'"}' http://webhook.symbiose.glass/wjava        
